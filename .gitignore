@@ -1,3 +1,6 @@
+# Special words
+special_words.txt
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
