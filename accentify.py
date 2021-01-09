@@ -1,10 +1,11 @@
 #! /usr/bin/env python3
 
 import argparse
+import os
 from pynput import keyboard
 from pynput.keyboard import Key
-import os
 import pyperclip
+import subprocess
 import sys
 import time
 import unicodedata
@@ -91,7 +92,7 @@ def parse_args():
         if len(args.shortcuts) > 2:
             parser.error('too many shortcuts (need two or less)')
     else:
-        if not (args.addword or args.test):
+        if args.addword is None and not args.test:
             parser.error('no shortcuts provided (need at least one)')
     return args
 
@@ -129,6 +130,9 @@ def run_test():
         listener.join()
 
 def run_add_words(ws):
+    if not ws:
+        subprocess.run(['xdg-open', SPECIAL_WORDS_PATH])
+        return
     special_words = load_special_words()
     for w in ws:
         special_words.add(w)
@@ -143,5 +147,5 @@ if __name__ == '__main__':
         run(*args.shortcuts)
     elif args.test:
         run_test()
-    elif args.addword:
+    elif args.addword is not None:
         run_add_words(args.addword)
