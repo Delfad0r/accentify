@@ -1,40 +1,33 @@
 #! /usr/bin/env python3
 
 import argparse
-import os
 from pynput import keyboard
-from pynput.keyboard import Key
 import pyperclip
-import subprocess
 import sys
-import time
-import unicodedata
 
 
-ACCENTS = ['aà', 'eèé', 'iì', 'oò', 'uù']
-
-def normalize(w):
-    return unicodedata.normalize('NFKD', w).encode('ascii', 'ignore').decode('ascii')
-
+ACUTE_ACCENTS = 'áéíóú'
+GRAVE_ACCENTS = 'àèìòù'
 
 class MultipleHotKeys(keyboard.Listener):
     def __init__(self, hotkeys, *args, **kwargs):
         self._hotkeys = [(set(keyboard.HotKey.parse(s)), f) for s, f in hotkeys.items()]
+        self._default = (lambda: None)
         self._state = set()
         super(MultipleHotKeys, self).__init__(
             on_press = self._on_press,
             on_release = self._on_release,
             *args, **kwargs)
-    
     def _on_press(self, key):
         self._state.add(key)
         for h, f in self._hotkeys:
             if h == self._state:
                 C = keyboard.Controller()
+                print(C.shift_pressed)
                 for k in h:
                     C.release(k)
                 f()
-    
+                break
     def _on_release(self, key):
         self._state = set()
 
@@ -45,79 +38,36 @@ def press_combo(C, s):
     for k in reversed(keys):
         C.release(k)
 
-def get_last_word(C):
-    press_combo(C, '<ctrl>+<shift>+<left>')
+def replace_last_char(f):
+    C = keyboard.Controller()
+    press_combo(C, '<shift>+<left>')
     old = pyperclip.paste()
     press_combo(C, '<ctrl>+c')
-    C.tap(Key.right)
-    w = pyperclip.paste()
+    a = pyperclip.paste()[-1]
     pyperclip.copy(old)
-    return w
-
-def do_stuff(delta, words = {}):
-    do_stuff.clicks = [i for i in do_stuff.clicks if i - time.time() < 1]
-    do_stuff.clicks.append(time.time())
-    if len(do_stuff.clicks) >= 6:
-        os.execl(sys.executable, sys.executable, *sys.argv)
-    C = keyboard.Controller()
-    w = get_last_word(C)
-    normw = normalize(w).lower()
-    if normw in words:
-        press_combo(C, '<ctrl>+<shift>+<left>')
-        C.type(''.join(i if j.islower() else i.upper() for i, j in zip(words[normw], w)))
-        return
-    l = w[-1].lower()
-    for acc in ACCENTS:
-        if l in acc:
-            l = acc[(acc.index(l) + delta) % len(acc)]
-            break
-    if w[-1].isupper():
-        l = l.upper()
-    C.tap(Key.backspace)
-    C.type(l)
-do_stuff.clicks = []
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('shortcuts', nargs = '*', type = str)
-    mex = parser.add_mutually_exclusive_group()
-    mex.add_argument('--addword', '-a', metavar = 'W', nargs = '*')
-    mex.add_argument('--test', '-t', action = 'store_true')
-    args = parser.parse_args()
-    if args.shortcuts:
-        if args.addword is not None:
-            parser.error('shortcuts and --addword are mutually exclusive')
-        if args.test:
-            parser.error('shortcuts and --test are mutually exclusive')
-        if len(args.shortcuts) > 2:
-            parser.error('too many shortcuts (need two or less)')
-    else:
-        if args.addword is None and not args.test:
-            parser.error('no shortcuts provided (need at least one)')
-    return args
+    b = f(a.lower())
+    if a.isupper():
+        b = b.upper()
+    C.type(b)
 
 
-SPECIAL_WORDS_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'special_words.txt')
-
-def load_special_words():
+def run(shortcut1, shortcut2):
+    def replace(c, acute):
+        for i, a, g, n in zip(range(5), ACUTE_ACCENTS, GRAVE_ACCENTS, 'aeiou'):
+            if c == a or c == g:
+                return 'aeiou'[i]
+            if c == n:
+                return a if acute else g
+        return c
+    repl1 = lambda: replace_last_char(lambda c: replace(c, False))
+    repl2 = lambda: replace_last_char(lambda c: replace(c, True))
     try:
-        return set(open(SPECIAL_WORDS_PATH, 'r').read().split())
-    except FileNotFoundError:
-        return set()
-
-def run(shortcut1, shortcut2 = None):
-    special_words = [w.lower() for w in load_special_words()]
-    special_words = { normalize(w) : w for w in special_words }
-    print(special_words)
-    hotkeys = { shortcut1 : (lambda: do_stuff(1, special_words)) }
-    if shortcut2:
-        hotkeys[shortcut2] = lambda: do_stuff(-1)
-    try:
-        with MultipleHotKeys(hotkeys) as ghk:
+        with MultipleHotKeys({ shortcut1 : repl1, shortcut2 : repl2 }) as ghk:
             ghk.join()
-    except Exception:
+    except Exception as E:
+        print(str(E))
         C = keyboard.Controller()
-        for k in [Key.shift, Key.ctrl, Key.alt]:
+        for k in [keyboard.Key.shift, keyboard.Key.ctrl, keyboard.Key.alt]:
             C.release(k)
 
 def run_test():
@@ -129,17 +79,20 @@ def run_test():
     with keyboard.Listener(on_press = lambda k: print_key(k)) as listener:
         listener.join()
 
-def run_add_words(ws):
-    if not ws:
-        subprocess.run(['xdg-open', SPECIAL_WORDS_PATH])
-        return
-    special_words = load_special_words()
-    for w in ws:
-        special_words.add(w)
-    with open(SPECIAL_WORDS_PATH, 'w') as fout:
-        for w in sorted(special_words):
-            fout.write(w)
-            fout.write('\n')
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('shortcuts', nargs = '*', type = str)
+    parser.add_argument('--test', '-t', action = 'store_true')
+    args = parser.parse_args()
+    if args.shortcuts:
+        if args.test:
+            parser.error('shortcuts and --test are mutually exclusive')
+        if len(args.shortcuts) != 2:
+            parser.error('neex exactly two shortcuts')
+    else:
+        if not args.test:
+            parser.error('no shortcuts provided')
+    return args
 
 if __name__ == '__main__':
     args = parse_args()
@@ -147,5 +100,3 @@ if __name__ == '__main__':
         run(*args.shortcuts)
     elif args.test:
         run_test()
-    elif args.addword is not None:
-        run_add_words(args.addword)
